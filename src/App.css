@@ -1,0 +1,14 @@
+/* Minimal styles for gravity sandbox game */
+
+body {
+  margin: 0;
+  padding: 0;
+  background: #020202;
+}
+
+#root {
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+  padding: 0;
+}
