@@ -5,7 +5,6 @@ import {
   MAX_DELTA_TIME,
   DENSITY,
   LANDED_BODY_MIN_RADIUS_RATIO,
-  SHIP_EDGE_BOUNCE_DAMPING,
   SHIP_FUEL_REGEN_DELAY,
   SHIP_FUEL_REGEN_RATE,
   SHIP_GRAVITY_SCALE,
@@ -16,6 +15,7 @@ import {
   PROJECTILE_MAX_AGE,
   PROJECTILE_RADIUS,
   PROJECTILE_SPEED,
+  SAFE_LANDING_RELATIVE_SPEED,
   SHIP_RADIUS,
   SHIP_ROTATION_SPEED,
   SHIP_TAKEOFF_EXTRA_SPEED,
@@ -24,20 +24,41 @@ import {
   SHIP_TAKEOFF_MIN_THRUST_MULTIPLIER,
   SHIP_THRUST_ACCELERATION,
 } from "./constants";
+import { createCamera } from "./camera";
+import {
+  createSolarSystem,
+  getStartingShipPosition,
+  getNextSolarSystemBodyId,
+  updateOrbitingBodies,
+} from "./solarSystem";
+import { createInitialMission, updateMissionForLanding } from "./mission";
 
 export function updatePhysics(
   state: SimulationState,
   deltaTime: number,
-  canvasWidth: number,
-  canvasHeight: number,
 ): void {
   if (state.isPaused) return;
 
-  // Clamp delta time to prevent explosions after tab switching
-  const dt = Math.min(deltaTime, MAX_DELTA_TIME);
+  let remainingTime = Math.min(deltaTime, MAX_DELTA_TIME * 24);
 
-  updateShip(state, dt, canvasWidth, canvasHeight);
-  updateProjectiles(state, dt, canvasWidth, canvasHeight);
+  while (remainingTime > 0) {
+    const dt = Math.min(remainingTime, MAX_DELTA_TIME);
+    stepPhysics(state, dt);
+    remainingTime -= dt;
+  }
+}
+
+function stepPhysics(
+  state: SimulationState,
+  dt: number,
+): void {
+  if (state.lastLanding) {
+    state.lastLanding.elapsed += dt;
+  }
+
+  updateOrbitingBodies(state.bodies, dt);
+  updateShip(state, dt);
+  updateProjectiles(state, dt);
 
   // Check collisions
   checkCollisions(state);
@@ -46,8 +67,6 @@ export function updatePhysics(
 function updateShip(
   state: SimulationState,
   dt: number,
-  canvasWidth: number,
-  canvasHeight: number,
 ): void {
   const ship = state.ship;
   const controls = state.shipControls;
@@ -90,6 +109,7 @@ function updateShip(
     const dist = Math.sqrt(dx * dx + dy * dy);
     if (dist < body.radius + ship.radius) {
       resolveShipBodyContact(
+        state,
         ship,
         body,
         dist,
@@ -99,8 +119,6 @@ function updateShip(
       );
     }
   }
-
-  bounceShipOffEdges(state, canvasWidth, canvasHeight);
 }
 
 function integrateShipMotion(
@@ -188,7 +206,7 @@ function launchFromSurface(
   const angle = Math.atan2(dy, dx);
   const normalX = Math.cos(angle);
   const normalY = Math.sin(angle);
-  const heavyBodyPenalty = Math.min(1, body.radius / 85);
+  const heavyBodyPenalty = Math.min(1, body.radius / 6500);
   const surfaceDistance = Math.max(
     body.radius + ship.radius,
     SOFTENING_DISTANCE,
@@ -207,8 +225,8 @@ function launchFromSurface(
 
   ship.x = body.x + normalX * (body.radius + ship.radius + 1);
   ship.y = body.y + normalY * (body.radius + ship.radius + 1);
-  ship.vx = normalX * takeoffSpeed;
-  ship.vy = normalY * takeoffSpeed;
+  ship.vx = body.vx + normalX * takeoffSpeed;
+  ship.vy = body.vy + normalY * takeoffSpeed;
   ship.angle = angle;
   ship.landedOnBodyId = null;
   ship.takeoffGraceTime = SHIP_TAKEOFF_GRACE_TIME;
@@ -226,16 +244,14 @@ function keepShipOnSurface(
 
   ship.x = body.x + Math.cos(angle) * surfaceDistance;
   ship.y = body.y + Math.sin(angle) * surfaceDistance;
-  ship.vx = 0;
-  ship.vy = 0;
+  ship.vx = body.vx;
+  ship.vy = body.vy;
   ship.angle = angle;
 }
 
 function updateProjectiles(
   state: SimulationState,
   dt: number,
-  canvasWidth: number,
-  canvasHeight: number,
 ): void {
   const projectilesToRemove = new Set<number>();
 
@@ -266,11 +282,7 @@ function updateProjectiles(
     projectile.y += projectile.vy * dt;
 
     if (
-      projectile.age > PROJECTILE_MAX_AGE ||
-      projectile.x < -projectile.radius ||
-      projectile.x > canvasWidth + projectile.radius ||
-      projectile.y < -projectile.radius ||
-      projectile.y > canvasHeight + projectile.radius
+      projectile.age > PROJECTILE_MAX_AGE
     ) {
       projectilesToRemove.add(projectile.id);
     }
@@ -290,6 +302,7 @@ function absorbProjectile(body: Body, projectile: Projectile): void {
 }
 
 function resolveShipBodyContact(
+  state: SimulationState,
   ship: SimulationState["ship"],
   body: Body,
   dist: number,
@@ -305,46 +318,29 @@ function resolveShipBodyContact(
   ship.x = body.x + normalX * surfaceDistance;
   ship.y = body.y + normalY * surfaceDistance;
 
-  const velocityIntoSurface = ship.vx * normalX + ship.vy * normalY;
+  const relativeVx = ship.vx - body.vx;
+  const relativeVy = ship.vy - body.vy;
+  const relativeSpeed = Math.sqrt(relativeVx * relativeVx + relativeVy * relativeVy);
+  const velocityIntoSurface = relativeVx * normalX + relativeVy * normalY;
   if (velocityIntoSurface < 0) {
     ship.vx -= velocityIntoSurface * normalX;
     ship.vy -= velocityIntoSurface * normalY;
   }
 
   if (allowLanding && canLand) {
-    ship.vx = 0;
-    ship.vy = 0;
+    const safe = relativeSpeed <= SAFE_LANDING_RELATIVE_SPEED;
+    ship.vx = body.vx;
+    ship.vy = body.vy;
     ship.angle = Math.atan2(normalY, normalX);
     ship.landedOnBodyId = body.id;
+    state.lastLanding = {
+      bodyId: body.id,
+      relativeSpeed,
+      safe,
+      elapsed: 0,
+    };
+    updateMissionForLanding(state, body.id, safe);
     return;
-  }
-}
-
-function bounceShipOffEdges(
-  state: SimulationState,
-  canvasWidth: number,
-  canvasHeight: number,
-): void {
-  const ship = state.ship;
-  const minX = ship.radius;
-  const maxX = canvasWidth - ship.radius;
-  const minY = ship.radius;
-  const maxY = canvasHeight - ship.radius;
-
-  if (ship.x < minX) {
-    ship.x = minX;
-    ship.vx = Math.abs(ship.vx) * SHIP_EDGE_BOUNCE_DAMPING;
-  } else if (ship.x > maxX) {
-    ship.x = maxX;
-    ship.vx = -Math.abs(ship.vx) * SHIP_EDGE_BOUNCE_DAMPING;
-  }
-
-  if (ship.y < minY) {
-    ship.y = minY;
-    ship.vy = Math.abs(ship.vy) * SHIP_EDGE_BOUNCE_DAMPING;
-  } else if (ship.y > maxY) {
-    ship.y = maxY;
-    ship.vy = -Math.abs(ship.vy) * SHIP_EDGE_BOUNCE_DAMPING;
   }
 }
 
@@ -421,17 +417,23 @@ export function createBody(
   };
 }
 
-export function createShip(x: number, y: number): SimulationState["ship"] {
+export function createShip(
+  x: number,
+  y: number,
+  vx = 0,
+  vy = 0,
+  landedOnBodyId: number | null = null,
+): SimulationState["ship"] {
   return {
     x,
     y,
-    vx: 0,
-    vy: 0,
+    vx,
+    vy,
     angle: -Math.PI / 2,
     radius: SHIP_RADIUS,
     mass: SHIP_MASS,
     isBurning: false,
-    landedOnBodyId: null,
+    landedOnBodyId,
     takeoffGraceTime: 0,
     takeoffThrustMultiplier: SHIP_TAKEOFF_MIN_THRUST_MULTIPLIER,
     fuel: SHIP_MAX_FUEL,
@@ -515,12 +517,23 @@ export function removeBody(state: SimulationState, bodyId: number): void {
 }
 
 export function clearAllBodies(state: SimulationState): void {
-  state.bodies = [];
+  const start = getStartingShipPosition();
+
+  state.bodies = createSolarSystem();
   state.previewBody = null;
   state.projectiles = [];
-  state.ship.landedOnBodyId = null;
-  state.ship.takeoffGraceTime = 0;
-  state.ship.takeoffThrustMultiplier = SHIP_TAKEOFF_MIN_THRUST_MULTIPLIER;
-  state.ship.fuel = SHIP_MAX_FUEL;
-  state.ship.burnCooldown = 0;
+  state.nextBodyId = getNextSolarSystemBodyId();
+  state.nextProjectileId = 0;
+  state.ship = createShip(start.x, start.y, start.vx, start.vy, start.landedOnBodyId);
+  state.shipControls.burn = false;
+  state.shipControls.rotateLeft = false;
+  state.shipControls.rotateRight = false;
+  state.camera = createCamera(start.x, start.y);
+  state.timeScale = 1;
+  state.trajectoryCache.points = [];
+  state.trajectoryCache.closestApproach = null;
+  state.trajectoryCache.elapsed = 0;
+  state.trajectoryCache.signature = "";
+  state.mission = createInitialMission();
+  state.lastLanding = null;
 }
