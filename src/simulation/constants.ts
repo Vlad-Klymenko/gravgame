@@ -55,6 +55,7 @@ export const TIME_SCALE_STEP = 2;
 // Trajectory guide constants
 export const TRAJECTORY_STEP_TIME = MAX_DELTA_TIME;
 export const TRAJECTORY_STEPS = 60000;
+export const TRAJECTORY_FALLBACK_STEPS = 6000;
 export const TRAJECTORY_SAMPLE_INTERVAL = 5;
 export const TRAJECTORY_CLOSED_ORBIT_MIN_STEPS = 1800;
 export const TRAJECTORY_CLOSED_ORBIT_POSITION_TOLERANCE = 180;
@@ -63,9 +64,9 @@ export const CONIC_ELLIPSE_SAMPLES = 900;
 export const CONIC_HYPERBOLA_SAMPLES = 900;
 export const CONIC_MAX_HYPERBOLA_SWEEP = Math.PI * 1.65;
 export const TRAJECTORY_CACHE_INTERVAL = 0.08;
-export const TRAJECTORY_COLOR = "rgba(255, 255, 255, 0.34)";
-export const CLOSEST_APPROACH_COLOR = "rgba(255, 255, 255, 0.72)";
-export const APSIS_MARKER_COLOR = "rgba(255, 255, 255, 0.86)";
+export const TRAJECTORY_COLOR = "rgba(145, 194, 205, 0.54)";
+export const CLOSEST_APPROACH_COLOR = "rgba(214, 185, 126, 0.82)";
+export const APSIS_MARKER_COLOR = "rgba(191, 217, 166, 0.88)";
 
 // Render performance constants
 export const MAX_SCREEN_GLOW_RADIUS = 220;
@@ -73,19 +74,19 @@ export const DETAILED_BODY_MAX_SCREEN_RADIUS = 850;
 export const BODY_CULL_PADDING = 260;
 
 // Visual constants
-export const CANVAS_BACKGROUND = "#020202";
-export const BODY_COLOR = "#d8d8d8";
-export const BODY_CORE_COLOR = "#f7f7f7";
-export const BODY_GLOW_COLOR = "rgba(255, 255, 255, 0.045)";
-export const BODY_EDGE_COLOR = "rgba(255, 255, 255, 0)";
-export const PREVIEW_BODY_COLOR = "#cfcfcf";
-export const PREVIEW_BODY_CORE_COLOR = "#ffffff";
-export const PREVIEW_BODY_GLOW_COLOR = "rgba(255, 255, 255, 0.06)";
-export const PREVIEW_BODY_EDGE_COLOR = "rgba(255, 255, 255, 0)";
-export const SHIP_COLOR = "#ffffff";
-export const SHIP_BURN_COLOR = "rgba(255, 255, 255, 0.7)";
-export const PROJECTILE_COLOR = "#ffffff";
-export const STAR_COLOR = "rgba(255, 255, 255, 0.58)";
-export const ORBIT_GUIDE_COLOR = "#bdbdbd";
-export const OVERLAY_TEXT_COLOR = "#ffffff";
+export const CANVAS_BACKGROUND = "#071016";
+export const BODY_COLOR = "#6f8f9a";
+export const BODY_CORE_COLOR = "#b9c7c6";
+export const BODY_GLOW_COLOR = "rgba(116, 158, 170, 0.1)";
+export const BODY_EDGE_COLOR = "rgba(18, 32, 42, 0.18)";
+export const PREVIEW_BODY_COLOR = "#b8aa83";
+export const PREVIEW_BODY_CORE_COLOR = "#e8dcc0";
+export const PREVIEW_BODY_GLOW_COLOR = "rgba(216, 188, 123, 0.16)";
+export const PREVIEW_BODY_EDGE_COLOR = "rgba(82, 69, 48, 0.12)";
+export const SHIP_COLOR = "#f1e8cf";
+export const SHIP_BURN_COLOR = "rgba(225, 151, 94, 0.78)";
+export const PROJECTILE_COLOR = "#e6c67a";
+export const STAR_COLOR = "rgba(210, 222, 218, 0.55)";
+export const ORBIT_GUIDE_COLOR = "#9fb7b4";
+export const OVERLAY_TEXT_COLOR = "#dfe8df";
 export const OVERLAY_FONT = "14px monospace";

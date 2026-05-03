@@ -62,6 +62,46 @@ const previewPalette: BodyPalette = {
   glow: PREVIEW_BODY_GLOW_COLOR,
 };
 
+const planetPalette: BodyPalette = {
+  core: "#9fb4b0",
+  mid: "#577783",
+  edge: "rgba(23, 38, 50, 0.24)",
+  glow: "rgba(83, 129, 146, 0.14)",
+};
+
+const moonPalettes: BodyPalette[] = [
+  {
+    core: "#d2c9ae",
+    mid: "#9a8e6f",
+    edge: "rgba(76, 66, 49, 0.2)",
+    glow: "rgba(180, 158, 105, 0.12)",
+  },
+  {
+    core: "#c3d0c3",
+    mid: "#748d7d",
+    edge: "rgba(42, 62, 54, 0.18)",
+    glow: "rgba(127, 167, 143, 0.12)",
+  },
+  {
+    core: "#c5bcc8",
+    mid: "#81758d",
+    edge: "rgba(49, 42, 61, 0.18)",
+    glow: "rgba(146, 125, 163, 0.12)",
+  },
+  {
+    core: "#c7c3b8",
+    mid: "#7f817c",
+    edge: "rgba(48, 52, 50, 0.2)",
+    glow: "rgba(155, 159, 147, 0.1)",
+  },
+  {
+    core: "#c6d0d1",
+    mid: "#6d8b96",
+    edge: "rgba(38, 58, 66, 0.18)",
+    glow: "rgba(115, 163, 176, 0.12)",
+  },
+];
+
 export function render(
   ctx: CanvasRenderingContext2D,
   canvas: HTMLCanvasElement,
@@ -87,9 +127,9 @@ export function render(
     if (isMapMode) {
       drawMapBody(ctx, body);
     } else if (screen.radius > DETAILED_BODY_MAX_SCREEN_RADIUS) {
-      drawSimpleBody(ctx, body.x, body.y, body.radius, bodyPalette);
+      drawSimpleBody(ctx, body.x, body.y, body.radius, getBodyPalette(body));
     } else {
-      drawGlowingBody(ctx, body.x, body.y, body.radius, bodyPalette, state.camera.zoom);
+      drawGlowingBody(ctx, body.x, body.y, body.radius, getBodyPalette(body), state.camera.zoom);
     }
   }
 
@@ -186,7 +226,7 @@ function isCircleVisible(
 
 function drawMapOrbits(ctx: CanvasRenderingContext2D, state: SimulationState): void {
   ctx.save();
-  ctx.strokeStyle = "rgba(255, 255, 255, 0.12)";
+  ctx.strokeStyle = "rgba(141, 166, 166, 0.2)";
   ctx.lineWidth = 1 / state.camera.zoom;
 
   for (const body of state.bodies) {
@@ -203,15 +243,22 @@ function drawMapOrbits(ctx: CanvasRenderingContext2D, state: SimulationState): v
 }
 
 function drawMapBody(ctx: CanvasRenderingContext2D, body: Body): void {
+  const palette = getBodyPalette(body);
+
   ctx.save();
-  ctx.fillStyle = body.orbit ? "rgba(255, 255, 255, 0.64)" : "#f2f2f2";
-  ctx.strokeStyle = body.orbit ? "rgba(255, 255, 255, 0.74)" : "rgba(255, 255, 255, 0.88)";
+  ctx.fillStyle = palette.mid;
+  ctx.strokeStyle = palette.core;
   ctx.lineWidth = 1 / Math.max(0.001, ctx.getTransform().a);
   ctx.beginPath();
   ctx.arc(body.x, body.y, body.radius, 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
   ctx.restore();
+}
+
+function getBodyPalette(body: Body): BodyPalette {
+  if (!body.orbit) return planetPalette;
+  return moonPalettes[Math.abs(body.id - 1) % moonPalettes.length] ?? bodyPalette;
 }
 
 function drawMissionMarkers(ctx: CanvasRenderingContext2D, state: SimulationState): void {
@@ -241,7 +288,7 @@ function drawMissionMarker(
   const labelOffset = body.radius + ringPadding + 18 / zoom;
 
   ctx.save();
-  ctx.strokeStyle = isTarget ? "rgba(255, 255, 255, 0.92)" : "rgba(255, 255, 255, 0.48)";
+  ctx.strokeStyle = isTarget ? "rgba(210, 178, 111, 0.95)" : "rgba(141, 166, 166, 0.56)";
   ctx.fillStyle = ctx.strokeStyle;
   ctx.lineWidth = (isTarget ? 2 : 1.2) / zoom;
   ctx.setLineDash(dash.map((value) => value / zoom));
@@ -337,7 +384,7 @@ function drawSimpleBody(
   ctx.beginPath();
   ctx.arc(x, y, radius, 0, Math.PI * 2);
   ctx.fill();
-  ctx.strokeStyle = "rgba(255, 255, 255, 0.42)";
+  ctx.strokeStyle = palette.core;
   ctx.lineWidth = Math.max(1, radius * 0.002);
   ctx.stroke();
   ctx.restore();
@@ -591,7 +638,7 @@ function drawShip(ctx: CanvasRenderingContext2D, state: SimulationState): void {
 
   ctx.save();
   ctx.strokeStyle = SHIP_COLOR;
-  ctx.fillStyle = "rgba(255, 255, 255, 0.1)";
+  ctx.fillStyle = "rgba(241, 232, 207, 0.14)";
   ctx.lineWidth = 2 / state.camera.zoom;
   ctx.lineJoin = "round";
   ctx.beginPath();
@@ -620,7 +667,7 @@ function drawMapShipMarker(
   });
 
   ctx.save();
-  ctx.fillStyle = "rgba(0, 0, 0, 0.72)";
+  ctx.fillStyle = "rgba(7, 16, 22, 0.78)";
   ctx.strokeStyle = SHIP_COLOR;
   ctx.lineWidth = 2;
   ctx.beginPath();
@@ -752,8 +799,8 @@ function drawFuelBar(
   const clampedRatio = Math.max(0, Math.min(1, fuelRatio));
 
   ctx.save();
-  ctx.strokeStyle = "rgba(255, 255, 255, 0.74)";
-  ctx.fillStyle = "rgba(255, 255, 255, 0.14)";
+  ctx.strokeStyle = "rgba(211, 220, 199, 0.74)";
+  ctx.fillStyle = "rgba(190, 204, 176, 0.18)";
   ctx.lineWidth = 1;
   ctx.strokeRect(x, y, width, height);
   ctx.fillRect(x + 2, y + 2, (width - 4) * clampedRatio, height - 4);
