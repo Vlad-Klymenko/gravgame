@@ -1,5 +1,6 @@
-import type { Body, ClosestApproach, SimulationState } from "./types";
+import type { Body, SimulationState, TrajectoryPoint } from "./types";
 import {
+  APSIS_MARKER_COLOR,
   BODY_COLOR,
   BODY_CORE_COLOR,
   BODY_CULL_PADDING,
@@ -8,7 +9,6 @@ import {
   CANVAS_BACKGROUND,
   CLOSEST_APPROACH_COLOR,
   DETAILED_BODY_MAX_SCREEN_RADIUS,
-  GRAVITATIONAL_CONSTANT,
   MAP_MODE_ZOOM,
   MAX_SCREEN_GLOW_RADIUS,
   NEAR_BODY_DISTANCE,
@@ -23,19 +23,17 @@ import {
   SAFE_LANDING_RELATIVE_SPEED,
   SHIP_BURN_COLOR,
   SHIP_COLOR,
-  SHIP_GRAVITY_SCALE,
   SHIP_MAX_FUEL,
-  SOFTENING_DISTANCE,
   STAR_COLOR,
-  TRAJECTORY_CACHE_INTERVAL,
   TRAJECTORY_COLOR,
-  TRAJECTORY_SAMPLE_INTERVAL,
-  TRAJECTORY_STEPS,
-  TRAJECTORY_STEP_TIME,
 } from "./constants";
 import { applyCameraTransform, worldToScreen } from "./camera";
 import { calculateOrbitalVelocity, findNearestBody } from "./physics";
 import { getMissionTargetId } from "./mission";
+import {
+  calculateTrajectoryPrediction,
+  type TrajectoryPrediction,
+} from "./trajectory";
 
 interface BodyPalette {
   core: string;
@@ -44,9 +42,10 @@ interface BodyPalette {
   glow: string;
 }
 
-interface TrajectoryPrediction {
-  points: { x: number; y: number }[];
-  closestApproach: ClosestApproach | null;
+interface ApsisInfo {
+  referenceBody: Body;
+  periapsis: { x: number; y: number; altitude: number };
+  apoapsis: { x: number; y: number; altitude: number };
 }
 
 const bodyPalette: BodyPalette = {
@@ -100,10 +99,15 @@ export function render(
 
   drawPreviewBody(ctx, state, canvas);
   drawProjectiles(ctx, state);
-  drawTrajectory(ctx, state);
+
+  const trajectoryPrediction = calculateTrajectoryPrediction(state);
+  state.trajectoryCache.points = trajectoryPrediction.points;
+  state.trajectoryCache.closestApproach = trajectoryPrediction.closestApproach;
+  drawTrajectory(ctx, state, trajectoryPrediction);
+  drawApsisMarkers(ctx, state, trajectoryPrediction);
 
   if (isMapMode) {
-    drawClosestApproach(ctx, state);
+    drawClosestApproach(ctx, state, trajectoryPrediction);
   } else {
     drawShip(ctx, state);
   }
@@ -114,7 +118,7 @@ export function render(
     drawMapShipMarker(ctx, canvas, state);
   }
 
-  drawOverlay(ctx, canvas, state);
+  drawOverlay(ctx, canvas, state, trajectoryPrediction);
 }
 
 function drawPreviewBody(
@@ -354,12 +358,16 @@ function drawProjectiles(ctx: CanvasRenderingContext2D, state: SimulationState):
   ctx.restore();
 }
 
-function drawTrajectory(ctx: CanvasRenderingContext2D, state: SimulationState): void {
-  const prediction = getCachedTrajectory(state);
+function drawTrajectory(
+  ctx: CanvasRenderingContext2D,
+  state: SimulationState,
+  prediction: TrajectoryPrediction,
+): void {
+  const displayPoints = toReferenceFramePoints(state, prediction);
   const visiblePoints = trimTrajectoryStart(
     state.ship.x,
     state.ship.y,
-    prediction.points,
+    displayPoints,
     state.ship.radius * 2.4,
   );
   if (visiblePoints.length < 2) return;
@@ -379,10 +387,20 @@ function drawTrajectory(ctx: CanvasRenderingContext2D, state: SimulationState): 
   ctx.restore();
 }
 
-function drawClosestApproach(ctx: CanvasRenderingContext2D, state: SimulationState): void {
-  const prediction = getCachedTrajectory(state);
+function drawClosestApproach(
+  ctx: CanvasRenderingContext2D,
+  state: SimulationState,
+  prediction: TrajectoryPrediction,
+): void {
   const closest = prediction.closestApproach;
   if (!closest) return;
+  const currentReference = getCurrentReferenceBody(state, prediction.referenceBodyId);
+  const referenceX = currentReference?.x ?? 0;
+  const referenceY = currentReference?.y ?? 0;
+  const trajectoryX = referenceX + closest.trajectoryX - closest.referenceX;
+  const trajectoryY = referenceY + closest.trajectoryY - closest.referenceY;
+  const targetX = referenceX + closest.targetX - closest.referenceX;
+  const targetY = referenceY + closest.targetY - closest.referenceY;
 
   ctx.save();
   ctx.strokeStyle = CLOSEST_APPROACH_COLOR;
@@ -390,57 +408,134 @@ function drawClosestApproach(ctx: CanvasRenderingContext2D, state: SimulationSta
   ctx.lineWidth = 1.2 / state.camera.zoom;
   ctx.setLineDash([4 / state.camera.zoom, 6 / state.camera.zoom]);
   ctx.beginPath();
-  ctx.moveTo(closest.trajectoryX, closest.trajectoryY);
-  ctx.lineTo(closest.targetX, closest.targetY);
+  ctx.moveTo(trajectoryX, trajectoryY);
+  ctx.lineTo(targetX, targetY);
   ctx.stroke();
   ctx.setLineDash([]);
   ctx.beginPath();
-  ctx.arc(closest.trajectoryX, closest.trajectoryY, 7 / state.camera.zoom, 0, Math.PI * 2);
+  ctx.arc(trajectoryX, trajectoryY, 7 / state.camera.zoom, 0, Math.PI * 2);
   ctx.fill();
   ctx.beginPath();
-  ctx.arc(closest.targetX, closest.targetY, 5 / state.camera.zoom, 0, Math.PI * 2);
+  ctx.arc(targetX, targetY, 5 / state.camera.zoom, 0, Math.PI * 2);
   ctx.fill();
   ctx.font = `${12 / state.camera.zoom}px monospace`;
-  ctx.fillText(`${Math.round(closest.distance)}`, closest.trajectoryX + 12 / state.camera.zoom, closest.trajectoryY);
+  ctx.fillText(`${Math.round(closest.distance)}`, trajectoryX + 12 / state.camera.zoom, trajectoryY);
   ctx.restore();
 }
 
-function getCachedTrajectory(state: SimulationState): TrajectoryPrediction {
-  const now = performance.now();
-  const signature = createTrajectorySignature(state);
+function drawApsisMarkers(
+  ctx: CanvasRenderingContext2D,
+  state: SimulationState,
+  prediction: TrajectoryPrediction,
+): void {
+  const apsis = getApsisInfo(state, prediction);
+  if (!apsis) return;
+
+  drawApsisMarker(ctx, state, apsis.periapsis, "Pe");
 
   if (
-    state.trajectoryCache.signature === signature &&
-    now - state.trajectoryCache.elapsed < TRAJECTORY_CACHE_INTERVAL * 1000
+    getDistance(
+      apsis.apoapsis.x,
+      apsis.apoapsis.y,
+      apsis.periapsis.x,
+      apsis.periapsis.y,
+    ) > state.ship.radius * 4
   ) {
-    return {
-      points: state.trajectoryCache.points,
-      closestApproach: state.trajectoryCache.closestApproach,
-    };
+    drawApsisMarker(ctx, state, apsis.apoapsis, "Ap");
   }
-
-  const prediction = calculateProjectileTrajectory(state);
-  state.trajectoryCache.points = prediction.points;
-  state.trajectoryCache.closestApproach = prediction.closestApproach;
-  state.trajectoryCache.elapsed = now;
-  state.trajectoryCache.signature = signature;
-  return prediction;
 }
 
-function createTrajectorySignature(state: SimulationState): string {
-  const ship = state.ship;
-  const bodySignature = state.bodies
-    .map((body) => `${body.id}:${Math.round(body.x / 100)}:${Math.round(body.y / 100)}:${Math.round(body.radius)}`)
-    .join(",");
+function drawApsisMarker(
+  ctx: CanvasRenderingContext2D,
+  state: SimulationState,
+  marker: { x: number; y: number; altitude: number },
+  label: string,
+): void {
+  const radius = 6 / state.camera.zoom;
 
-  return [
-    Math.round(ship.x / 40),
-    Math.round(ship.y / 40),
-    Math.round(ship.vx / 4),
-    Math.round(ship.vy / 4),
-    getMissionTargetId(state.mission),
-    bodySignature,
-  ].join("|");
+  ctx.save();
+  ctx.strokeStyle = APSIS_MARKER_COLOR;
+  ctx.fillStyle = APSIS_MARKER_COLOR;
+  ctx.lineWidth = 1.2 / state.camera.zoom;
+  ctx.beginPath();
+  ctx.arc(marker.x, marker.y, radius, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.font = `${12 / state.camera.zoom}px monospace`;
+  ctx.fillText(
+    `${label} ${formatDistance(marker.altitude)}`,
+    marker.x + 10 / state.camera.zoom,
+    marker.y - 7 / state.camera.zoom,
+  );
+  ctx.restore();
+}
+
+function toReferenceFramePoints(
+  state: SimulationState,
+  prediction: TrajectoryPrediction,
+): { x: number; y: number }[] {
+  const currentReference = getCurrentReferenceBody(state, prediction.referenceBodyId);
+  const referenceX = currentReference?.x ?? 0;
+  const referenceY = currentReference?.y ?? 0;
+
+  return prediction.points.map((point) =>
+    toReferenceFramePoint(point, referenceX, referenceY),
+  );
+}
+
+function getApsisInfo(
+  state: SimulationState,
+  prediction: TrajectoryPrediction,
+): ApsisInfo | null {
+  const referenceBody = getCurrentReferenceBody(state, prediction.referenceBodyId);
+  if (!referenceBody || prediction.points.length < 2) return null;
+
+  const referenceX = referenceBody.x;
+  const referenceY = referenceBody.y;
+  let periapsis: ApsisInfo["periapsis"] | null = null;
+  let apoapsis: ApsisInfo["apoapsis"] | null = null;
+
+  for (const point of prediction.points) {
+    const displayPoint = toReferenceFramePoint(point, referenceX, referenceY);
+    const altitude =
+      getDistance(displayPoint.x, displayPoint.y, referenceX, referenceY) -
+      referenceBody.radius -
+      state.ship.radius;
+
+    if (!periapsis || altitude < periapsis.altitude) {
+      periapsis = { ...displayPoint, altitude };
+    }
+
+    if (!apoapsis || altitude > apoapsis.altitude) {
+      apoapsis = { ...displayPoint, altitude };
+    }
+  }
+
+  if (!periapsis || !apoapsis) return null;
+
+  return {
+    referenceBody,
+    periapsis,
+    apoapsis,
+  };
+}
+
+function toReferenceFramePoint(
+  point: TrajectoryPoint,
+  referenceX: number,
+  referenceY: number,
+): { x: number; y: number } {
+  return {
+    x: referenceX + point.x - point.referenceX,
+    y: referenceY + point.y - point.referenceY,
+  };
+}
+
+function getCurrentReferenceBody(
+  state: SimulationState,
+  referenceBodyId: number | null,
+): Body | null {
+  if (referenceBodyId === null) return null;
+  return state.bodies.find((body) => body.id === referenceBodyId) ?? null;
 }
 
 function trimTrajectoryStart(
@@ -459,98 +554,6 @@ function trimTrajectoryStart(
   return firstVisibleIndex === -1 ? [] : points.slice(firstVisibleIndex);
 }
 
-function calculateProjectileTrajectory(state: SimulationState): TrajectoryPrediction {
-  const points: { x: number; y: number }[] = [];
-  const bodies = clonePredictedBodies(state.bodies);
-  const targetId = getMissionTargetId(state.mission);
-  let closestApproach: ClosestApproach | null = null;
-  let x = state.ship.x;
-  let y = state.ship.y;
-  let vx = state.ship.vx;
-  let vy = state.ship.vy;
-
-  for (let i = 0; i < TRAJECTORY_STEPS; i++) {
-    const acceleration = calculateGravityAcceleration(x, y, bodies);
-
-    x += vx * TRAJECTORY_STEP_TIME + 0.5 * acceleration.ax * TRAJECTORY_STEP_TIME * TRAJECTORY_STEP_TIME;
-    y += vy * TRAJECTORY_STEP_TIME + 0.5 * acceleration.ay * TRAJECTORY_STEP_TIME * TRAJECTORY_STEP_TIME;
-
-    advancePredictedBodies(bodies, TRAJECTORY_STEP_TIME);
-
-    const nextAcceleration = calculateGravityAcceleration(x, y, bodies);
-    vx += 0.5 * (acceleration.ax + nextAcceleration.ax) * TRAJECTORY_STEP_TIME;
-    vy += 0.5 * (acceleration.ay + nextAcceleration.ay) * TRAJECTORY_STEP_TIME;
-
-    const target = bodies.find((body) => body.id === targetId);
-    if (target && i % TRAJECTORY_SAMPLE_INTERVAL === 0) {
-      const distance = Math.max(0, getDistance(x, y, target.x, target.y) - target.radius - state.ship.radius);
-      if (!closestApproach || distance < closestApproach.distance) {
-        closestApproach = {
-          trajectoryX: x,
-          trajectoryY: y,
-          targetX: target.x,
-          targetY: target.y,
-          distance,
-        };
-      }
-    }
-
-    if (i % TRAJECTORY_SAMPLE_INTERVAL === 0) {
-      points.push({ x, y });
-    }
-
-    if (bodies.some((body) => getDistance(x, y, body.x, body.y) < body.radius + state.ship.radius)) {
-      break;
-    }
-  }
-
-  return { points, closestApproach };
-}
-
-function clonePredictedBodies(bodies: Body[]): Body[] {
-  return bodies.map((body) => ({
-    ...body,
-    orbit: body.orbit ? { ...body.orbit } : undefined,
-  }));
-}
-
-function advancePredictedBodies(bodies: Body[], deltaTime: number): void {
-  for (const body of bodies) {
-    if (!body.orbit) continue;
-
-    const center = bodies.find((candidate) => candidate.id === body.orbit?.centerBodyId);
-    if (!center) continue;
-
-    body.orbit.angle += body.orbit.angularVelocity * deltaTime;
-    body.x = center.x + Math.cos(body.orbit.angle) * body.orbit.distance;
-    body.y = center.y + Math.sin(body.orbit.angle) * body.orbit.distance;
-    body.vx = -Math.sin(body.orbit.angle) * body.orbit.distance * body.orbit.angularVelocity;
-    body.vy = Math.cos(body.orbit.angle) * body.orbit.distance * body.orbit.angularVelocity;
-  }
-}
-
-function calculateGravityAcceleration(
-  x: number,
-  y: number,
-  bodies: Body[],
-): { ax: number; ay: number } {
-  let ax = 0;
-  let ay = 0;
-
-  for (const body of bodies) {
-    const dx = body.x - x;
-    const dy = body.y - y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-    const distWithSoftening = Math.max(dist, SOFTENING_DISTANCE);
-    const acceleration = (GRAVITATIONAL_CONSTANT * body.mass * SHIP_GRAVITY_SCALE) / (distWithSoftening * distWithSoftening);
-    const angle = Math.atan2(dy, dx);
-
-    ax += Math.cos(angle) * acceleration;
-    ay += Math.sin(angle) * acceleration;
-  }
-
-  return { ax, ay };
-}
 
 function drawShip(ctx: CanvasRenderingContext2D, state: SimulationState): void {
   const ship = state.ship;
@@ -639,6 +642,7 @@ function drawOverlay(
   ctx: CanvasRenderingContext2D,
   canvas: HTMLCanvasElement,
   state: SimulationState,
+  prediction: TrajectoryPrediction,
 ): void {
   ctx.save();
   ctx.font = OVERLAY_FONT;
@@ -658,6 +662,16 @@ function drawOverlay(
   ctx.fillText(`Mission: ${state.mission.hasCargo ? "Deliver" : "Pickup"} Moon ${getMissionTargetId(state.mission)} | Done: ${state.mission.completedDeliveries}`, padding, y);
   y += 20;
   ctx.fillText(state.mission.message, padding, y);
+
+  const apsis = getApsisInfo(state, prediction);
+  if (apsis) {
+    y += 20;
+    ctx.fillText(
+      `Reference: ${getBodyLabel(apsis.referenceBody)} | Pe ${formatDistance(apsis.periapsis.altitude)} | Ap ${formatDistance(apsis.apoapsis.altitude)}`,
+      padding,
+      y,
+    );
+  }
 
   const relativeSpeed = getNearbyRelativeSpeed(state);
   if (relativeSpeed !== null) {
@@ -684,6 +698,24 @@ function drawOverlay(
   ctx.shadowBlur = 0;
   drawFuelBar(ctx, canvas, state.ship.fuel / SHIP_MAX_FUEL);
   ctx.restore();
+}
+
+function getBodyLabel(body: Body): string {
+  return body.orbit ? `Moon ${body.id}` : "Planet";
+}
+
+function formatDistance(distance: number): string {
+  const rounded = Math.max(0, distance);
+
+  if (rounded >= 100000) {
+    return `${(rounded / 1000).toFixed(0)}k`;
+  }
+
+  if (rounded >= 10000) {
+    return `${(rounded / 1000).toFixed(1)}k`;
+  }
+
+  return `${Math.round(rounded)}`;
 }
 
 function getNearbyRelativeSpeed(state: SimulationState): number | null {

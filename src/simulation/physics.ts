@@ -23,6 +23,7 @@ import {
   SHIP_TAKEOFF_MAX_THRUST_MULTIPLIER,
   SHIP_TAKEOFF_MIN_THRUST_MULTIPLIER,
   SHIP_THRUST_ACCELERATION,
+  SOI_LOCK_DISTANCE_MULTIPLIER,
 } from "./constants";
 import { createCamera } from "./camera";
 import {
@@ -157,8 +158,34 @@ function calculateShipGravityAcceleration(
   y: number,
   bodies: Body[],
 ): { ax: number; ay: number } {
-  let ax = 0;
-  let ay = 0;
+  const dominantBody = findDominantGravityBody(x, y, bodies);
+  if (!dominantBody) return { ax: 0, ay: 0 };
+
+  const dx = dominantBody.x - x;
+  const dy = dominantBody.y - y;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  const distWithSoftening = Math.max(dist, SOFTENING_DISTANCE);
+  const acceleration =
+    (GRAVITATIONAL_CONSTANT * dominantBody.mass * SHIP_GRAVITY_SCALE) /
+    (distWithSoftening * distWithSoftening);
+  const angle = Math.atan2(dy, dx);
+
+  return {
+    ax: Math.cos(angle) * acceleration,
+    ay: Math.sin(angle) * acceleration,
+  };
+}
+
+export function findDominantGravityBody(
+  x: number,
+  y: number,
+  bodies: Body[],
+): Body | null {
+  const localBody = findLocalBody(x, y, bodies);
+  if (localBody) return localBody;
+
+  let bestBody: Body | null = null;
+  let bestAcceleration = -Infinity;
 
   for (const body of bodies) {
     const dx = body.x - x;
@@ -168,13 +195,43 @@ function calculateShipGravityAcceleration(
     const acceleration =
       (GRAVITATIONAL_CONSTANT * body.mass * SHIP_GRAVITY_SCALE) /
       (distWithSoftening * distWithSoftening);
-    const angle = Math.atan2(dy, dx);
 
-    ax += Math.cos(angle) * acceleration;
-    ay += Math.sin(angle) * acceleration;
+    if (acceleration > bestAcceleration) {
+      bestAcceleration = acceleration;
+      bestBody = body;
+    }
   }
 
-  return { ax, ay };
+  return bestBody;
+}
+
+function findLocalBody(
+  x: number,
+  y: number,
+  bodies: Body[],
+): Body | null {
+  let nearestLocalBody: Body | null = null;
+  let nearestSurfaceDistance = Infinity;
+
+  for (const body of bodies) {
+    if (!body.orbit) continue;
+
+    const dx = body.x - x;
+    const dy = body.y - y;
+    const centerDistance = Math.sqrt(dx * dx + dy * dy);
+    const surfaceDistance = centerDistance - body.radius;
+    const lockDistance = body.radius * SOI_LOCK_DISTANCE_MULTIPLIER;
+
+    if (
+      surfaceDistance <= lockDistance &&
+      surfaceDistance < nearestSurfaceDistance
+    ) {
+      nearestSurfaceDistance = surfaceDistance;
+      nearestLocalBody = body;
+    }
+  }
+
+  return nearestLocalBody;
 }
 
 function updateShipFuel(
@@ -475,7 +532,7 @@ export function calculateOrbitalVelocity(
 
   // v = sqrt(G * M / r)
   const velocityMagnitude = Math.sqrt(
-    (GRAVITATIONAL_CONSTANT * centerBody.mass) / dist,
+    (GRAVITATIONAL_CONSTANT * centerBody.mass * SHIP_GRAVITY_SCALE) / dist,
   );
 
   // Perpendicular direction (90 degrees counterclockwise from radial)

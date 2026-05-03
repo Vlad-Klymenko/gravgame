@@ -64,10 +64,17 @@ export interface PreviewBody {
 }
 
 export interface TrajectoryCache {
-  points: { x: number; y: number }[];
+  points: TrajectoryPoint[];
   closestApproach: ClosestApproach | null;
   elapsed: number;
   signature: string;
+}
+
+export interface TrajectoryPoint {
+  x: number;
+  y: number;
+  referenceX: number;
+  referenceY: number;
 }
 
 export interface ClosestApproach {
@@ -75,6 +82,8 @@ export interface ClosestApproach {
   trajectoryY: number;
   targetX: number;
   targetY: number;
+  referenceX: number;
+  referenceY: number;
   distance: number;
 }
 

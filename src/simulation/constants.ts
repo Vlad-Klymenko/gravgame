@@ -21,6 +21,7 @@ export const SHIP_TAKEOFF_MIN_THRUST_MULTIPLIER = 0.55;
 export const SHIP_TAKEOFF_MAX_THRUST_MULTIPLIER = 1.35;
 export const SHIP_ROTATION_SPEED = 3.2;
 export const SHIP_GRAVITY_SCALE = 0.075;
+export const SOI_LOCK_DISTANCE_MULTIPLIER = 18;
 export const SHIP_EDGE_BOUNCE_DAMPING = 0.76;
 export const LANDED_BODY_MIN_RADIUS_RATIO = 1.25;
 export const SHIP_MAX_FUEL = 10;
@@ -52,12 +53,19 @@ export const MAX_TIME_SCALE = 8;
 export const TIME_SCALE_STEP = 2;
 
 // Trajectory guide constants
-export const TRAJECTORY_STEP_TIME = 0.035;
-export const TRAJECTORY_STEPS = 1200;
+export const TRAJECTORY_STEP_TIME = MAX_DELTA_TIME;
+export const TRAJECTORY_STEPS = 60000;
 export const TRAJECTORY_SAMPLE_INTERVAL = 5;
+export const TRAJECTORY_CLOSED_ORBIT_MIN_STEPS = 1800;
+export const TRAJECTORY_CLOSED_ORBIT_POSITION_TOLERANCE = 180;
+export const TRAJECTORY_CLOSED_ORBIT_VELOCITY_TOLERANCE = 6;
+export const CONIC_ELLIPSE_SAMPLES = 900;
+export const CONIC_HYPERBOLA_SAMPLES = 900;
+export const CONIC_MAX_HYPERBOLA_SWEEP = Math.PI * 1.65;
 export const TRAJECTORY_CACHE_INTERVAL = 0.08;
 export const TRAJECTORY_COLOR = "rgba(255, 255, 255, 0.34)";
 export const CLOSEST_APPROACH_COLOR = "rgba(255, 255, 255, 0.72)";
+export const APSIS_MARKER_COLOR = "rgba(255, 255, 255, 0.86)";
 
 // Render performance constants
 export const MAX_SCREEN_GLOW_RADIUS = 220;
